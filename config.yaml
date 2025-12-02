@@ -1,0 +1,44 @@
+# mvte/config.yaml
+
+data:
+  source: "pykeen"          # "files" or "pykeen"
+  dataset: "FB15k-237"       # only used when source == "pykeen" : "FB15k-237", "WN18RR", "YAGO3-10", etc. 
+
+  train_path: "data/train.txt"
+  valid_path: "data/valid.txt"
+  test_path: "data/test.txt"
+
+model:
+  embedding_dim: 1000
+  tri_hidden_dim: 512
+  tet_hidden_dim: 512
+  dropout: 0.1
+  gamma: 12.0
+
+topology:
+  max_triangles_per_entity: null       # or null for no cap
+  max_tetras_per_entity: null          # or null for no cap
+
+training:
+  seed: 123
+  device: "cuda"                     # "auto", "cpu", "cuda", or "cuda:0"
+  lr: 0.005
+  num_epochs: 500
+  batch_size: 1024
+  num_negatives: 256
+  adversarial_temperature: 1.0 # alpha for adv. neg. sampling
+  negative_mode: "both"              # "head" | "tail" | "both"
+  log_interval: 50
+
+evaluation:
+  batch_size_entities: 2048
+  filtered: true  # whether to use filtered metrics, might be better to set it to false during training to monitor learning curves and true for final evaluation
+  hits_ks: [1, 3, 10]
+  eval_every: 50                      # run evaluation every N epochs
+  max_eval_triples: 50000               # max number of triples to use for eval (for speed during training/validation)
+logging:
+  level: "INFO"
+  log_dir: "logs"
+
+output:
+  save_dir: "checkpoints"
