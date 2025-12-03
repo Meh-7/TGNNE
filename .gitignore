@@ -1,3 +1,5 @@
 .venvtopo
 
 main_flex copy.py
+/.venvtop
+/__pycache__
