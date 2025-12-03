@@ -4,6 +4,7 @@ data:
   source: "pykeen"          # "files" or "pykeen"
   dataset: "FB15k-237"       # only used when source == "pykeen" : "FB15k-237", "WN18RR", "YAGO3-10", etc. 
 
+  prepared_dir: "data/FB15k-237/"  # directory where prepared data is stored, only used when source == "files"
   train_path: "data/train.txt"
   valid_path: "data/valid.txt"
   test_path: "data/test.txt"
