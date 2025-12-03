@@ -7,6 +7,8 @@ from typing import Any, Dict
 from datetime import datetime
 import json
 import time
+import csv
+
 
 import torch
 import yaml
@@ -17,9 +19,6 @@ from training import train_model, move_topology_to_device
 from utils import (
     set_random_seed,
     setup_logging,
-    load_triples_from_file,
-    build_id_mappings,
-    encode_triples,
     get_device_from_config,
     get_run_name_from_config,
 )
@@ -50,10 +49,79 @@ def load_config(path: str) -> Dict[str, Any]:
         cfg = yaml.safe_load(f)
     return cfg
 
+def _load_prepared_dataset(
+    data_cfg: Dict[str, Any],
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, Dict[str, int], Dict[str, int]]:
+    """
+    Load integer-encoded splits and mappings from a prepared dataset directory.
+
+    Expects:
+        data.prepared_dir: path like "data/FB15k-237"
+
+    And inside that directory:
+        - train_ids.pt
+        - valid_ids.pt
+        - test_ids.pt 
+        - entity2id.pt
+        - relation2id.pt
+    """
+    if "prepared_dir" not in data_cfg:
+        raise ValueError(
+            "config.data.prepared_dir is not set.\n"
+            "You are now in the 'prepared dataset' workflow. "
+            "Run data_prep.py first to create a prepared dataset directory, "
+            "then point config.data.prepared_dir to it."
+        )
+
+    dataset_dir = Path(data_cfg["prepared_dir"]) # will be resolved relative to the current working directory
+    if not dataset_dir.exists():
+        raise FileNotFoundError(
+            f"Prepared dataset directory not found: {dataset_dir}"
+        )
+
+    logger.info("loading prepared dataset from %s", dataset_dir)
+
+    train_path = dataset_dir / "train_ids.pt"
+    valid_path = dataset_dir / "valid_ids.pt"
+    test_path = dataset_dir / "test_ids.pt"
+    ent_map_path = dataset_dir / "entity2id.pt"
+    rel_map_path = dataset_dir / "relation2id.pt"
+
+    if not train_path.exists():
+        raise FileNotFoundError(f"train_ids.pt not found in {dataset_dir}")
+    if not ent_map_path.exists() or not rel_map_path.exists():
+        raise FileNotFoundError(
+            f"entity2id.pt / relation2id.pt not found in {dataset_dir}"
+        )
+
+    # integer triples [N, 3]
+    train_triples = torch.load(train_path).long().to(device)
+    valid_triples = torch.load(valid_path).long().to(device) if valid_path.exists() else None
+    test_triples = torch.load(test_path).long().to(device) if test_path.exists() else None
+
+    entity2id: Dict[str, int] = torch.load(ent_map_path)
+    relation2id: Dict[str, int] = torch.load(rel_map_path)
+
+    logger.info(
+        "loaded splits: train=%d, valid=%s, test=%s",
+        train_triples.shape[0],
+        "None" if valid_triples is None else valid_triples.shape[0],
+        "None" if test_triples is None else test_triples.shape[0],
+    )
+    logger.info(
+        "num entities: %d | num relations: %d",
+        len(entity2id),
+        len(relation2id),
+    )
+
+    return train_triples, valid_triples, test_triples, entity2id, relation2id
+
+
 
 def main() -> None:
-    start_time = time.time()
     """entry point: load config, data, topology, model, and run training."""
+    start_time = time.time()
     args = parse_args()
     cfg = load_config(args.config)
 
@@ -63,13 +131,12 @@ def main() -> None:
     run_root = Path(cfg.get("output", {}).get("save_dir", "runs"))
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # e.g. checkpoints/FB15k-237/20251202_141522
+    # e.g. runs/FB15k-237/20251202_141522
     run_dir = run_root / run_name / timestamp
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    import csv
     metrics_csv_path = run_dir / "metrics.csv"
-    metrics_history = []  # keep in memory too, for summary.json at the end
+    metrics_history: list[dict[str, Any]] = []  # for summary.json at the end
 
 
     # logging 
@@ -96,103 +163,17 @@ def main() -> None:
 
     # data loading: either from local files or a PyKEEN dataset
     data_cfg = cfg.get("data", {})
-    source = data_cfg.get("source", "files")
+    (
+        train_triples,
+        valid_triples,
+        test_triples,
+        entity2id,
+        relation2id,
+    ) = _load_prepared_dataset(data_cfg=data_cfg, device=device)
 
-    if source == "pykeen":        # PyKEEN path
+    num_entities = len(entity2id)
+    num_relations = len(relation2id)
 
-        try:
-            from pykeen.datasets import FB15k237, get_dataset
-        except ImportError as e:
-            raise ImportError(
-                "data.source is set to 'pykeen' but pykeen is not installed. "
-                "Install it with `pip install pykeen`."
-            ) from e
-
-        dataset_name = data_cfg.get("dataset", "FB15k237")
-        if dataset_name == "FB15k237":
-            ds = FB15k237()
-        else:
-            ds = get_dataset(dataset=dataset_name)
-
-        logger.info(
-            "loaded PyKEEN dataset %s: %d entities, %d relations",
-            dataset_name,
-            ds.num_entities,
-            ds.num_relations,
-        )
-        # mapped_triples are already integer IDs [N, 3] (h, r, t)
-        train_triples = ds.training.mapped_triples.to(device)
-        valid_triples = (
-            ds.validation.mapped_triples.to(device)
-            if ds.validation is not None
-            else None
-        )
-        test_triples = (
-            ds.testing.mapped_triples.to(device)
-            if ds.testing is not None
-            else None
-        )
-
-        num_entities = ds.num_entities
-        num_relations = ds.num_relations
-
-        # real label to id maps from the dataset (used in checkpoints/testing)
-
-        entity2id = dict(ds.entity_to_id)
-        relation2id = dict(ds.relation_to_id)
-
-    else:        # file path loading
-        train_path = Path(data_cfg["train_path"])
-        valid_path = data_cfg.get("valid_path", None)
-        test_path = data_cfg.get("test_path", None)
-
-        if not train_path.exists():
-            raise FileNotFoundError(f"train file not found: {train_path}")
-
-        # load raw triples (string ids)
-        logger.info("loading training triples from %s", train_path)
-        train_triples_raw = load_triples_from_file(train_path)
-
-        valid_triples_raw = None
-        test_triples_raw = None
-        # in case of validation / test paths not provided (just train)
-        if valid_path is not None:
-            valid_triples_raw = load_triples_from_file(Path(valid_path))
-            logger.info("loaded validation triples from %s", valid_path)
-        if test_path is not None:
-            test_triples_raw = load_triples_from_file(Path(test_path))
-            logger.info("loaded test triples from %s", test_path)
-
-        # build entity / relation id mappings
-        entity2id, relation2id = build_id_mappings(
-            train_triples_raw,
-            valid_triples_raw,
-            test_triples_raw,
-        )
-
-        num_entities = len(entity2id)
-        num_relations = len(relation2id)
-        logger.info("num entities: %d | num relations: %d", num_entities, num_relations)
-
-        # encode triples to integer tensors
-        train_triples = encode_triples(train_triples_raw, entity2id, relation2id)
-        train_triples = train_triples.to(device)
-
-        valid_triples = None
-        test_triples = None
-        if valid_triples_raw is not None:
-            valid_triples = encode_triples(
-                valid_triples_raw,
-                entity2id,
-                relation2id,
-            ).to(device)
-        if test_triples_raw is not None:
-            test_triples = encode_triples(
-                test_triples_raw,
-                entity2id,
-                relation2id,
-            ).to(device)
-    
     # build union of triples for filtered evaluation
     # (kept on CPU because evaluation internally moves to CPU to build a set)
     all_triples = train_triples.cpu()
@@ -200,33 +181,6 @@ def main() -> None:
         all_triples = torch.cat([all_triples, valid_triples.cpu()], dim=0)
     if test_triples is not None:
         all_triples = torch.cat([all_triples, test_triples.cpu()], dim=0)
-
-    # prepare output directories
-    output_cfg = cfg.get("output", {})
-    base_output_dir = output_cfg.get("save_dir", None)
-    out_dir: Path | None = None
-
-    if base_output_dir is not None:
-        # e.g. checkpoints/<run_name>/<timestamp>/
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_dir = Path(base_output_dir) / run_name / timestamp
-        out_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("output will be saved to %s", out_dir)
-    
-
-    if out_dir is not None:
-        encoded_dir = out_dir / "encoded_splits"
-        encoded_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save encoded splits (to cpu tensors because it's safer)
-        torch.save(train_triples.cpu(), encoded_dir / "train_ids.pt")
-        if valid_triples is not None:
-            torch.save(valid_triples.cpu(), encoded_dir / "valid_ids.pt")
-        if test_triples is not None:
-            torch.save(test_triples.cpu(),  encoded_dir / "test_ids.pt")
-
-
-        logger.info("saved encoded splits to %s", encoded_dir)
 
 
     # topology construction (from train triples)
