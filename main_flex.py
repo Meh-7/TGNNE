@@ -236,8 +236,75 @@ def main() -> None:
     adv_temp = train_cfg.get("adversarial_temperature", 1.0)
     negative_mode = train_cfg.get("negative_mode", "both")
     log_interval = train_cfg.get("log_interval", 100)
+    checkpoint_every = train_cfg.get("checkpoint_every", 0)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    # ------------------------------------------------------------------
+    # model summary logging
+    # ------------------------------------------------------------------
+    w1_init, w2_init = model.get_fusion_weights()
+    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    logger.info(
+        (
+            "starting training of MVTEModel\n"
+            "  num_entities      = %d\n"
+            "  num_relations     = %d\n"
+            "  embedding_dim     = %d\n"
+            "  tri_hidden_dim    = %d\n"
+            "  tet_hidden_dim    = %d\n"
+            "  dropout           = %.3f\n"
+            "  gamma (fixed)     = %.4f\n"
+            "  fusion_alpha      = [%+.4f, %+.4f]\n"
+            "  initial w1, w2    = %.4f, %.4f\n"
+            "  total_parameters  = %d"
+        ),
+        num_entities,
+        num_relations,
+        embedding_dim,
+        tri_hidden_dim,
+        tet_hidden_dim,
+        dropout,
+        float(model.gamma.item()),
+        float(model.fusion_alpha[0].item()),
+        float(model.fusion_alpha[1].item()),
+        float(w1_init.item()),
+        float(w2_init.item()),
+        num_params,
+    )
+    # ------------------------------------------------------------------
+    # training setup summary logging
+    # ------------------------------------------------------------------
+    logger.info(
+        (
+            "training configuration:\n"
+            "  seed                  = %d\n"
+            "  device                = %s\n"
+            "  learning_rate         = %.6f\n"
+            "  num_epochs            = %d\n"
+            "  batch_size            = %d\n"
+            "  num_negatives         = %d\n"
+            "  adversarial_temp      = %.4f\n"
+            "  negative_mode         = %s\n"
+            "  log_interval          = %d\n"
+            "  checkpoint_every      = %d"
+        ),
+        seed,
+        str(device),
+        lr,
+        num_epochs,
+        batch_size,
+        num_negatives,
+        adv_temp,
+        negative_mode,
+        log_interval,
+        checkpoint_every,
+    )
+
+    logger.info("========== STARTING TRAINING RUN ==========")
+
+
 
     def epoch_callback(epoch: int, mean_loss: float) -> None:
         """callback run at the end of each epoch to perform evaluation."""
@@ -305,6 +372,21 @@ def main() -> None:
             if write_header:
                 writer.writeheader()
             writer.writerow(record)
+        # optional checkpointing
+        if checkpoint_every > 0 and (epoch % checkpoint_every) == 0:
+            ckpt_dir = run_dir / "checkpoints"
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+            ckpt_path = ckpt_dir / f"checkpoint_epoch_{epoch}.pt"
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "config": cfg,
+                },
+                ckpt_path,
+            )
+            logger.info("saved periodic checkpoint to %s", ckpt_path)
 
         
 
@@ -335,6 +417,9 @@ def main() -> None:
     V_fused_cpu = V_fused.detach().cpu()
     logger.info("computed fused entity embeddings V with shape %s", tuple(V_fused_cpu.shape))
 
+    end_time = time.time()
+    elapsed_sec = end_time - start_time
+    logger.info("training completed in %.2f seconds", elapsed_sec)
 
     # optional saving
     # save fused vector embeddings and model checkpoint
@@ -372,9 +457,6 @@ def main() -> None:
 
     logger.info("done")
 
-
-    end_time = time.time()
-    elapsed_sec = end_time - start_time
 
     
     summary = {
