@@ -272,6 +272,7 @@ def main() -> None:
             (
                 "validation epoch %d | loss=%.4f | MR=%.1f | MRR=%.4f | "
                 "Hits@1=%.4f | Hits@3=%.4f | Hits@10=%.4f"
+                "Fusion weights: w1=%.4f, w2=%.4f"
             ),
             epoch,
             mean_loss,
@@ -280,6 +281,8 @@ def main() -> None:
             metrics.get("Hits@1", float("nan")),
             metrics.get("Hits@3", float("nan")),
             metrics.get("Hits@10", float("nan")),
+            model.w1.item(),
+            model.w2.item(),
         )
 
         # NEW: store a structured record
@@ -332,36 +335,37 @@ def main() -> None:
 
 
     # optional saving
+    # save fused vector embeddings and model checkpoint
+    fused_path = run_dir / "fused_entity_embeddings.pt"
+    torch.save(
+        {
+            "V_fused": V_fused_cpu,
+            "entity2id": entity2id,  # to align rows with entity ids
+        },
+        fused_path,
+    )
+    logger.info("saved fused entity embeddings to %s", fused_path)
+    # saving of full checkpoint
+    model_path = run_dir / "mvte_model.pt"
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "entity2id": entity2id,
+            "relation2id": relation2id,
+            "config": cfg,
+            "V_fused": V_fused_cpu,
+            "fusion_weights": {
+                "w1": float(model.w1.item()),
+                "w2": float(model.w2.item()),
+            }
+        },
+        model_path,
+    )
+    logger.info("saved model checkpoint to %s", model_path)
 
-    if out_dir is not None:
-        # save fused vector embeddings and model checkpoint
-        fused_path = out_dir / "fused_entity_embeddings.pt"
-        torch.save(
-            {
-                "V_fused": V_fused_cpu,
-                "entity2id": entity2id,  # to align rows with entity ids
-            },
-            fused_path,
-        )
-        logger.info("saved fused entity embeddings to %s", fused_path)
-        # saving of full checkpoint
-        model_path = out_dir / "mvte_model.pt"
-        torch.save(
-            {
-                "model_state_dict": model.state_dict(),
-                "entity2id": entity2id,
-                "relation2id": relation2id,
-                "config": cfg,
-                "V_fused": V_fused_cpu,
-
-            },
-            model_path,
-        )
-        logger.info("saved model checkpoint to %s", model_path)
-
-        with (out_dir / "config_used.yaml").open("w", encoding="utf-8") as f:
-            yaml.safe_dump(cfg, f)
-        logger.info("saved config to %s", out_dir / "config_used.yaml")
+    with (run_dir / "config_used.yaml").open("w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f)
+    logger.info("saved config to %s", run_dir / "config_used.yaml")
 
 
     logger.info("done")
