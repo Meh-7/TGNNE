@@ -269,8 +269,8 @@ def main() -> None:
         float(model.gamma.item()),
         float(model.fusion_alpha[0].item()),
         float(model.fusion_alpha[1].item()),
-        float(w1_init.item()),
-        float(w2_init.item()),
+        float(w1_init),
+        float(w2_init),
         num_params,
     )
     # ------------------------------------------------------------------
@@ -335,6 +335,7 @@ def main() -> None:
             filtered=eval_filtered,
             hits_ks=eval_hits_ks,
         )
+        w1, w2 = model.get_fusion_weights()
         logger.info(
             (
                 "validation epoch %d | loss=%.4f | MR=%.1f | MRR=%.4f | "
@@ -348,8 +349,8 @@ def main() -> None:
             metrics.get("Hits@1", float("nan")),
             metrics.get("Hits@3", float("nan")),
             metrics.get("Hits@10", float("nan")),
-            model.w1.item(),
-            model.w2.item(),
+            float(w1),
+            float(w2),
         )
 
         # NEW: store a structured record
@@ -361,8 +362,8 @@ def main() -> None:
             "valid_Hits@1": float(metrics.get("Hits@1", float("nan"))),
             "valid_Hits@3": float(metrics.get("Hits@3", float("nan"))),
             "valid_Hits@10": float(metrics.get("Hits@10", float("nan"))),
-            "w1": float(model.w1.item()),
-            "w2": float(model.w2.item()),
+            "w1": float(w1),
+            "w2": float(w2),
         }
         metrics_history.append(record)
         # append to CSV (create header on first write)
