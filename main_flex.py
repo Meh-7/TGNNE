@@ -294,6 +294,8 @@ def main() -> None:
             "valid_Hits@1": float(metrics.get("Hits@1", float("nan"))),
             "valid_Hits@3": float(metrics.get("Hits@3", float("nan"))),
             "valid_Hits@10": float(metrics.get("Hits@10", float("nan"))),
+            "w1": float(model.w1.item()),
+            "w2": float(model.w2.item()),
         }
         metrics_history.append(record)
         # append to CSV (create header on first write)
