@@ -259,7 +259,7 @@ def main() -> None:
             "  gamma (fixed)     = %.4f\n"
             "  fusion_alpha      = [%+.4f, %+.4f]\n"
             "  initial w1, w2    = %.4f, %.4f\n"
-            "  total_parameters  = %d"
+            "  total_parameters  = %d\n"
             "  fusion_mode      = %s"
         ),
         num_entities,
