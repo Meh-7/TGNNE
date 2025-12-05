@@ -16,6 +16,8 @@ model:
   tet_hidden_dim: 128
   dropout: 0.1
   gamma: 9.0
+  fusion_mode: "equal"   # "learned" | "topo_only" | "equal"
+
 
 topology:
   max_triangles_per_entity: null       # or null for no cap

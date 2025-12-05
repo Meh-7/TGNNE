@@ -225,6 +225,7 @@ def main() -> None:
         dropout=dropout,
         gamma=gamma,
     )
+    model.fusion_mode = model_cfg.get("fusion_mode", "equal")  # "learned" | "topo_only" | "equal"
     model.to(device)
 
     # optimizer and training cfg
@@ -259,6 +260,7 @@ def main() -> None:
             "  fusion_alpha      = [%+.4f, %+.4f]\n"
             "  initial w1, w2    = %.4f, %.4f\n"
             "  total_parameters  = %d"
+            "  fusion_mode      = %s"
         ),
         num_entities,
         num_relations,
@@ -272,6 +274,7 @@ def main() -> None:
         float(w1_init),
         float(w2_init),
         num_params,
+        model.fusion_mode,
     )
     # ------------------------------------------------------------------
     # training setup summary logging

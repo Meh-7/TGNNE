@@ -275,8 +275,8 @@ class MVTEModel(nn.Module):
             torch.tensor([gamma], dtype=torch.float),
             requires_grad=False,
         )
-
-
+        self.fusion_mode = "learned"  # default mode; can be changed externally
+        
         # base embedding tables
         self.entity_emb = nn.Embedding(num_entities, embedding_dim)
         self.relation_emb = nn.Embedding(num_relations, embedding_dim)
@@ -308,7 +308,21 @@ class MVTEModel(nn.Module):
 
     def get_fusion_weights(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """return (w1, w2) from softmax over fusion_alpha."""
-        weights = F.softmax(self.fusion_alpha, dim=0) 
+        mode = getattr(self, "fusion_mode", "learned")
+        if mode == "topo_only":
+            # use only topology-aware embeddings
+            return(
+                torch.tensor(0.0, device=self.fusion_alpha.device),
+                torch.tensor(1.0, device=self.fusion_alpha.device),
+            )
+        if mode == "equal":
+            # equal weights
+            return(
+                torch.tensor(0.5, device=self.fusion_alpha.device),
+                torch.tensor(0.5, device=self.fusion_alpha.device),
+            )
+        # default: learned weights via softmax
+        weights = F.softmax(self.fusion_alpha, dim=0)
         w1 = weights[0]
         w2 = weights[1]
         return w1, w2 # will be 0.5, 0.5 at the start of training
