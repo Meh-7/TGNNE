@@ -438,6 +438,7 @@ def main() -> None:
     logger.info("saved fused entity embeddings to %s", fused_path)
     # saving of full checkpoint
     model_path = run_dir / "mvte_model.pt"
+    w1, w2 = model.get_fusion_weights()
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -446,8 +447,8 @@ def main() -> None:
             "config": cfg,
             "V_fused": V_fused_cpu,
             "fusion_weights": {
-                "w1": float(model.w1.item()),
-                "w2": float(model.w2.item()),
+                "w1": float(w1),
+                "w2": float(w2),
             }
         },
         model_path,
