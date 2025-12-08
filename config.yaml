@@ -16,7 +16,7 @@ model:
   tet_hidden_dim: 128
   dropout: 0.1
   gamma: 9.0
-  fusion_mode: "equal"   # "learned" | "topo_only" | "equal"
+  fusion_mode: "custom"   # "learned" | "topo_only" | "equal" | "custom"
 
 
 topology:
@@ -26,8 +26,8 @@ topology:
 training:
   seed: 123
   device: "cuda"                     # "auto", "cpu", "cuda", or "cuda:0"
-  lr: 0.005
-  num_epochs: 500
+  lr: 0.01
+  num_epochs: 400
   batch_size: 1024
   num_negatives: 256
   adversarial_temperature: 1.0 # alpha for adv. neg. sampling

@@ -321,6 +321,12 @@ class MVTEModel(nn.Module):
                 torch.tensor(0.5, device=self.fusion_alpha.device),
                 torch.tensor(0.5, device=self.fusion_alpha.device),
             )
+        if mode == "custom":
+            # custom fixed weights set externally
+            return(
+                torch.tensor(0.7, device=self.fusion_alpha.device),
+                torch.tensor(0.3, device=self.fusion_alpha.device),
+            )
         # default: learned weights via softmax
         weights = F.softmax(self.fusion_alpha, dim=0)
         w1 = weights[0]
