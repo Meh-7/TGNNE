@@ -479,6 +479,200 @@ class MVTEModel(nn.Module):
         """alias for score_triples to integrate with training loops."""
         return self.score_triples(triples, topo)
 
+# ---- Creating a  TransC subclass --------------------------------------------
+class MVTETransC(MVTEModel):
+    """
+    MVTE + TransC-style concept/instance module.
+
+    - Instances:
+        * use MVTEModel machinery (entity_emb, topology_encoder, fusion) for
+          relational triples and instanceOf.
+    - Concepts:
+        * represented as spheres: center in R^d, radius in R.
+        * used for instanceOf (instance ∈ concept sphere) and
+          subClassOf (sphere containment) losses.
+
+    This class does NOT change how relational triples are scored.
+    It only adds additional parameters + helper losses for TransC.
+    """
+    def __init__(
+        self,
+        num_entities: int,
+        num_relations: int,
+        num_concepts: int,
+        embedding_dim: int,
+        tri_hidden_dim: int,
+        tet_hidden_dim: int,
+        dropout: float = 0.0,
+        gamma: float = 12.0,
+        gamma_e: float = 1.0,   # margin for instanceOf
+        gamma_c: float = 1.0,   # margin for subClassOf
+    ) -> None:
+        # instances + relations + topology + fusion + base scoring
+        super().__init__(
+            num_entities=num_entities,
+            num_relations=num_relations,
+            embedding_dim=embedding_dim,
+            tri_hidden_dim=tri_hidden_dim,
+            tet_hidden_dim=tet_hidden_dim,
+            dropout=dropout,
+            gamma=gamma,
+        )
+
+        #  TransC-specific parameters
+        self.num_concepts = num_concepts
+
+        # concept centers in the same space as entities
+        self.concept_center = nn.Embedding(num_concepts, embedding_dim)
+        # separate table for radii (scalar per concept)
+        self.concept_radius = nn.Embedding(num_concepts, 1)
+
+        # margins for the TransC-style losses (kept fixed)
+        self.gamma_e = float(gamma_e)
+        self.gamma_c = float(gamma_c)
+
+        self._reset_transc_parameters()
+
+    # initialisation / normalisation
+
+    def _reset_transc_parameters(self) -> None:
+        """Initialise concept centers and radii."""
+        nn.init.xavier_uniform_(self.concept_center.weight)
+        # start with moderate positive radius (e.g. 0.5)
+        nn.init.constant_(self.concept_radius.weight, 0.5)
+
+    def normalize_concepts(self) -> None:
+        """
+        Optional projection step to keep concept geometry well-behaved.
+
+        - clamp radii to [0, 1]
+        - normalise centers to have ||p_c||_2 <= 1
+
+        can call this after optimizer.step() if desired.
+        """
+        with torch.no_grad():
+            # clamp radius
+            self.concept_radius.weight.clamp_(min=0.0, max=1.0)
+
+            # normalise centers to lie in (or on) the unit ball
+            centers = self.concept_center.weight
+            norms = centers.norm(p=2, dim=1, keepdim=True).clamp(min=1.0)
+            self.concept_center.weight.copy_(centers / norms)
+
+    # InstanceOf: instance to concept sphere
+    def instanceof_score(
+        self,
+        inst_ids: torch.LongTensor,      # [B]
+        concept_ids: torch.LongTensor,   # [B]
+        V: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Compute TransC-style instanceOf violation scores.
+
+        We treat each concept as a sphere s_c(p_c, m_c).
+
+        For each pair (i, c):
+            p_c: concept center
+            m_c: concept radius (scalar)
+            i_vec: instance embedding (by default, fused MVTE view if V is given)
+
+        We use:
+            f_e(i, c) = ||i_vec - p_c||_2 - m_c
+
+        So:
+            f_e <= 0  --> inside the sphere (good)
+            f_e > 0   --> outside (violation)
+
+        Smaller is better. Loss will be margin-ranking over these scores.
+        """
+        if V is None:
+            # fall back to base entity embeddings if a fused view is not provided
+            i_vec = self.entity_emb(inst_ids)  # [B, d]
+        else:
+            i_vec = V[inst_ids]                # [B, d]
+
+        c_center = self.concept_center(concept_ids)            # [B, d]
+        c_radius = self.concept_radius(concept_ids).squeeze(-1)  # [B]
+
+        dist = torch.norm(i_vec - c_center, p=2, dim=-1)       # [B]
+        f_e = dist - c_radius                                  # [B]
+        return f_e
+
+    def instanceof_loss(
+        self,
+        pos_inst_ids: torch.LongTensor,      # [B]
+        pos_concept_ids: torch.LongTensor,   # [B]
+        neg_inst_ids: torch.LongTensor,      # [B]
+        neg_concept_ids: torch.LongTensor,   # [B]
+        V: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Margin-ranking loss for instanceOf triples:
+
+            L_e = mean( [ gamma_e + f_e(pos) - f_e(neg) ]_+ )
+
+        where f_e is the violation score from instanceof_score().
+        """
+        f_pos = self.instanceof_score(pos_inst_ids, pos_concept_ids, V=V)  # [B]
+        f_neg = self.instanceof_score(neg_inst_ids, neg_concept_ids, V=V)  # [B]
+
+        margin = self.gamma_e
+        loss = torch.relu(margin + f_pos - f_neg).mean()
+        return loss
+
+    
+    # SubClassOf: concept_i in concept_j (sphere containment)
+    def subclass_score(
+        self,
+        sub_concept_ids: torch.LongTensor,  # [B]  c_i (sub)
+        sup_concept_ids: torch.LongTensor,  # [B]  c_j (super)
+    ) -> torch.Tensor:
+        """
+        Compute a containment violation score for subClassOf pairs.
+
+        Each concept is a sphere s(p, m). For (c_i ⊆ c_j), we want sphere_i
+        to be fully inside sphere_j, roughly:
+
+            ||p_i - p_j||_2 + m_i - m_j <= 0
+
+        We therefore define:
+
+            f_c(c_i, c_j) = ||p_i - p_j||_2 + m_i - m_j
+
+        Smaller is better, <=0 means no violation; >0 is a violation.
+        """
+        p_i = self.concept_center(sub_concept_ids)          # [B, d]
+        p_j = self.concept_center(sup_concept_ids)          # [B, d]
+        m_i = self.concept_radius(sub_concept_ids).squeeze(-1)  # [B]
+        m_j = self.concept_radius(sup_concept_ids).squeeze(-1)  # [B]
+
+        dist_centers = torch.norm(p_i - p_j, p=2, dim=-1)   # [B]
+        f_c = dist_centers + m_i - m_j                      # [B]
+        return f_c
+
+    def subclass_loss(
+        self,
+        pos_sub_ids: torch.LongTensor,   # [B]  c_i
+        pos_sup_ids: torch.LongTensor,   # [B]  c_j
+        neg_sub_ids: torch.LongTensor,   # [B]
+        neg_sup_ids: torch.LongTensor,   # [B]
+    ) -> torch.Tensor:
+        """
+        Margin-ranking loss for subClassOf triples:
+
+            L_c = mean( [ gamma_c + f_c(pos) - f_c(neg) ]_+ )
+
+        where f_c is the containment violation score from subclass_score().
+        """
+        f_pos = self.subclass_score(pos_sub_ids, pos_sup_ids)  # [B]
+        f_neg = self.subclass_score(neg_sub_ids, neg_sup_ids)  # [B]
+
+        margin = self.gamma_c
+        loss = torch.relu(margin + f_pos - f_neg).mean()
+        return loss
+
+
+
 """
 Note on forward(), score_triples(), and training-time caching
 -------------------------------------------------------------
