@@ -11,6 +11,7 @@ data:
   test_path: "data/test.txt"
 
 model:
+  base_scorer: "transe"    # "transe", "distmult", "complex", "rotate", etc.
   embedding_dim: 500
   tri_hidden_dim: 256
   tet_hidden_dim: 128

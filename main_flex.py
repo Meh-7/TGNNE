@@ -225,7 +225,7 @@ def main() -> None:
         dropout=dropout,
         gamma=gamma,
     )
-    model.fusion_mode = model_cfg.get("fusion_mode", "equal")  # "learned" | "topo_only" | "equal"
+    model.fusion_mode = model_cfg.get("fusion_mode", "equal")  # "learned" | "topo_only" | "equal" | "custom"
     model.to(device)
 
     # optimizer and training cfg

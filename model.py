@@ -12,6 +12,64 @@ from data_topology import TopologyData
 logger = logging.getLogger(__name__)
 
 
+# ---- Scoring functions -------------------------------------------------
+def score_transe_from_V(
+    triples: torch.LongTensor,
+    V: torch.Tensor,
+    R: torch.Tensor,
+    gamma: torch.Tensor,
+) -> torch.Tensor:
+    """TransE-style score: gamma - ||V[h] + R[r] - V[t]||_2."""
+    assert triples.dim() == 2 and triples.size(1) == 3, "triples must have shape [B, 3]"
+
+    h = triples[:, 0]
+    r = triples[:, 1]
+    t = triples[:, 2]
+    # gets the indices for heads, relations, tails from the batch of triples
+    # we then map these indices to their corresponding embeddings to get vectors for scoring
+    v_h = V[h]      # [B, d]
+    v_t = V[t]      # [B, d]
+    r_vec = R[r]    # [B, d]
+
+    # TransE translation: V[h] + R[r] ≈ V[t]
+    diff = v_h + r_vec - v_t
+
+    # compute negative L2 norm of the diff vector as score
+    distance = torch.norm(diff, p=2, dim=-1)  # [B]
+    # dim=-1 means we compute the norm across the embedding dimension for each triple in the batch (each row's d-dim vector)
+    # RotatE/TransE-style score: gamma - distance
+    scores = gamma - distance  # [B]
+    return scores
+
+def score_distmult_from_V(
+    triples: torch.LongTensor,
+    V: torch.Tensor,
+    R: torch.Tensor,
+    gamma: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """DistMult-style score"""
+    assert triples.dim() == 2 and triples.size(1) == 3, "triples must have shape [B, 3]"
+
+    h = triples[:, 0]
+    r = triples[:, 1]
+    t = triples[:, 2]
+
+    v_h = V[h]      # [B, d]
+    v_t = V[t]      # [B, d]
+    r_vec = R[r]    # [B, d]
+
+    scores = (v_h * r_vec * v_t).sum(dim=-1)  # [B]
+    return scores
+# ----------------------------------------------------------------------------
+
+SCORER_REGISTRY = {
+    "transe": score_transe_from_V,
+    "distmult": score_distmult_from_V,
+    # later: "complex": score_complex_from_V, "rotate": score_rotate_from_V, ...
+}
+
+
+
 def _mean_aggregate(
     edge_index: torch.LongTensor,
     src: torch.Tensor,
@@ -277,6 +335,10 @@ class MVTEModel(nn.Module):
         )
         self.fusion_mode = "learned"  # default mode; can be changed externally
         
+        # base scoring function: "transe" (default) or "distmult"
+        # can be changed externally, e.g. model.base_scorer = "distmult"
+        self.base_scorer: str = "transe"
+
         # base embedding tables
         self.entity_emb = nn.Embedding(num_entities, embedding_dim)
         self.relation_emb = nn.Embedding(num_relations, embedding_dim)
@@ -363,31 +425,21 @@ class MVTEModel(nn.Module):
         triples: torch.LongTensor,
         V: torch.Tensor,
     ) -> torch.Tensor:
-        """TransE-style scores given a precomputed entity view V."""
+        """Scores given a precomputed entity view V.
+        Delegates to a base scoring function selected by `self.base_scorer`."""
         assert triples.dim() == 2 and triples.size(1) == 3, "triples must have shape [B, 3]"
 
         R = self.relation_emb.weight  # [num_relations, d]
 
-        h = triples[:, 0]
-        r = triples[:, 1]
-        t = triples[:, 2]
-        # gets the indices for heads, relations, tails from the batch of triples
-        # we then map these indices to their corresponding embeddings to get vectors for scoring
-        v_h = V[h]      # [B, d]
-        v_t = V[t]      # [B, d]
-        r_vec = R[r]    # [B, d]
-
-        # TransE translation: V[h] + R[r] ≈ V[t]
-        diff = v_h + r_vec - v_t
-
-        # compute negative L2 norm of the diff vector as score
-        distance = torch.norm(diff, p=2, dim=-1)  # [B]
-        # dim=-1 means we compute the norm across the embedding dimension for each triple in the batch (each row's d-dim vector)
-
-        # RotatE/TransE-style score: gamma - distance
-        scores = self.gamma - distance # [B]
-
-        return scores
+        scorer_fn = SCORER_REGISTRY.get(self.base_scorer, None)
+        if scorer_fn is None:
+            raise ValueError(f"unknown base_scorer '{self.base_scorer}'")
+        return scorer_fn(
+            triples=triples,
+            V=V,
+            R=R,
+            gamma=self.gamma,
+        )
     
     # the function to score from a precomputed V is useful to compute V once per batch and use it for both positive and negative triples without recomputing
 
