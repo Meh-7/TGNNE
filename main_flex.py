@@ -209,6 +209,7 @@ def main() -> None:
     dropout = model_cfg.get("dropout", 0.0)
     gamma = model_cfg.get("gamma", 12.0)
 
+
     # evaluation config
     eval_cfg = cfg.get("evaluation", {})
     eval_batch_size_entities = eval_cfg.get("batch_size_entities", 1024)
@@ -225,6 +226,8 @@ def main() -> None:
         dropout=dropout,
         gamma=gamma,
     )
+    # NEW: select base scorer from config
+    model.base_scorer = model_cfg.get("base_scorer", "transe")
     model.fusion_mode = model_cfg.get("fusion_mode", "equal")  # "learned" | "topo_only" | "equal" | "custom"
     model.to(device)
 
@@ -260,6 +263,7 @@ def main() -> None:
             "  fusion_alpha      = [%+.4f, %+.4f]\n"
             "  initial w1, w2    = %.4f, %.4f\n"
             "  total_parameters  = %d\n"
+            "  base_scorer    = %s\n"
             "  fusion_mode      = %s"
         ),
         num_entities,
@@ -274,6 +278,7 @@ def main() -> None:
         float(w1_init),
         float(w2_init),
         num_params,
+        model.base_scorer,
         model.fusion_mode,
     )
     # ------------------------------------------------------------------
