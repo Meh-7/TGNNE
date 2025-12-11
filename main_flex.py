@@ -135,6 +135,11 @@ def main() -> None:
     run_dir = run_root / run_name / timestamp
     run_dir.mkdir(parents=True, exist_ok=True)
 
+    # save used config for reference
+    with (run_dir / "config_used.yaml").open("w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f)
+    logger.info("saved config to %s", run_dir / "config_used.yaml")
+    
     metrics_csv_path = run_dir / "metrics.csv"
     metrics_history: list[dict[str, Any]] = []  # for summary.json at the end
 
@@ -318,7 +323,7 @@ def main() -> None:
         """callback run at the end of each epoch to perform evaluation."""
         if valid_triples is None:
             return
-        if eval_every > 1 and (epoch % eval_every) != 0:
+        if eval_every > 1 and (epoch % eval_every) != 0 and epoch != num_epochs:
             return
         logger.info("running link prediction evaluation at epoch %d", epoch)
         # This uses evaluation.py. If V is None, it will:
@@ -460,9 +465,6 @@ def main() -> None:
     )
     logger.info("saved model checkpoint to %s", model_path)
 
-    with (run_dir / "config_used.yaml").open("w", encoding="utf-8") as f:
-        yaml.safe_dump(cfg, f)
-    logger.info("saved config to %s", run_dir / "config_used.yaml")
 
 
     logger.info("done")
