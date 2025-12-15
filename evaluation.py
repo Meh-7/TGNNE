@@ -261,11 +261,19 @@ def compute_link_prediction_metrics(
     all_ranks = torch.cat([head_ranks, tail_ranks], dim=0).float()  # [2N]
 
     mr = all_ranks.mean().item()
-    mrr = (1.0 / all_ranks).mean().item()
+    mr_std = all_ranks.std(unbiased=False).item() # compute standard deviation, unbiased=False for population std
+
+
+    reciprocal_ranks = 1.0 / all_ranks
+    mrr  = reciprocal_ranks.mean().item()
+    mrr_std = reciprocal_ranks.std(unbiased=False).item()
+
 
     metrics: Dict[str, float] = {
         "MR": mr,
+        "MR_std": mr_std,
         "MRR": mrr,
+        "MRR_std": mrr_std,
     }
 
     for k in hits_ks:
