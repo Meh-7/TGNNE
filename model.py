@@ -150,8 +150,9 @@ class EntityToTriangleGNN(nn.Module):
         super().__init__()
         hidden_dim = hidden_dim or dim
 
-        self.lin = nn.Linear(dim, hidden_dim) # input layer must be of dim size because tri_agg outputs num_triangles x dim 
-        self.act = nn.ReLU()
+        self.lin1 = nn.Linear(dim, hidden_dim) # input layer must be of dim size because tri_agg outputs num_triangles x dim 
+        self.act = nn.GELU()
+        self.lin2 = nn.Linear(hidden_dim, hidden_dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(
@@ -166,8 +167,9 @@ class EntityToTriangleGNN(nn.Module):
             src=entity_emb,
             num_dst=num_triangles,
         ) # [num_triangles, dim]
-        tri_out = self.lin(tri_agg)
+        tri_out = self.lin1(tri_agg)
         tri_out = self.act(tri_out)
+        tri_out = self.lin2(tri_out)
         tri_out = self.dropout(tri_out)
         return tri_out # [num_triangles, hidden_dim]
 
@@ -184,8 +186,9 @@ class TriangleToTetraGNN(nn.Module):
         super().__init__()
         hidden_dim = hidden_dim or dim
 
-        self.lin = nn.Linear(dim, hidden_dim)
-        self.act = nn.ReLU()
+        self.lin1 = nn.Linear(dim, hidden_dim)
+        self.lin2 = nn.Linear(hidden_dim, hidden_dim)
+        self.act = nn.GELU()
         self.dropout = nn.Dropout(dropout)
 
     def forward(
@@ -200,8 +203,9 @@ class TriangleToTetraGNN(nn.Module):
             src=tri_emb,
             num_dst=num_tetras,
         )
-        tet_out = self.lin(tet_agg)
+        tet_out = self.lin1(tet_agg)
         tet_out = self.act(tet_out)
+        tet_out = self.lin2(tet_out)
         tet_out = self.dropout(tet_out)
         return tet_out
 
