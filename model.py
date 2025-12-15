@@ -248,6 +248,8 @@ class TopologyEncoder(nn.Module):
         # simple projection: tet_dim -> entity_dim so we can aggregate to V_topo and have it be the same dim as entity_emb
         self.tet_to_entity = nn.Linear(tet_hidden_dim, input_dim)
 
+        self.norm = nn.LayerNorm(input_dim) # layer norm to stabilise training
+
     def forward(
         self,
         entity_emb: torch.Tensor,  # [num_entities, dim]
@@ -296,7 +298,7 @@ class TopologyEncoder(nn.Module):
             src=tet_proj,
             num_dst=num_entities,
         )
-
+        v_topo = self.norm(v_topo) # normalized, now w2 will control the contribution of  the topo more effectively  and not just the scale 
         return v_topo
 
 
