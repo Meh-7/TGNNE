@@ -322,8 +322,10 @@ def main() -> None:
     def epoch_callback(epoch: int, mean_loss: float) -> None:
         """callback run at the end of each epoch to perform evaluation."""
         if valid_triples is None:
+            print("no validation triples provided; skipping evaluation")
             return
         if eval_every > 1 and (epoch % eval_every) != 0 and epoch != num_epochs:
+            print("skipping evaluation at epoch %d", epoch)
             return
         logger.info("running link prediction evaluation at epoch %d", epoch)
         # This uses evaluation.py. If V is None, it will:
