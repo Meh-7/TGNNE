@@ -84,8 +84,8 @@ def _load_prepared_dataset(
 
 
 def main() -> None:
-    """Entry point: load checkpoint, fused embeddings and encoded splits, then
-    run link prediction evaluation on the test split."""
+    """Entry point: load checkpoint and prepared dataset, then
+        run link prediction evaluation on the test split."""
     args = parse_args()
     cfg = load_config(args.config)
 
@@ -154,20 +154,28 @@ def main() -> None:
         device=device,
     )
 
+    if test_triples is None or test_triples.numel() == 0:
+        raise ValueError("No test triples found in prepared dataset.")
 
     # Build union of all triples for filtered evaluation (on CPU).
-    all_triples = train_triples
+    all_triples = train_triples.cpu()
+
     if valid_triples is not None:
-        all_triples = torch.cat([all_triples, valid_triples], dim=0)
+        all_triples = torch.cat([all_triples, valid_triples.cpu()], dim=0)
     if test_triples is not None:
-        all_triples = torch.cat([all_triples, test_triples], dim=0)
+        all_triples = torch.cat([all_triples, test_triples.cpu()], dim=0)
 
-    # load checkpoint & reconstruct model 
-    logger.info("loading checkpoint from %s", ckpt_path)
-    checkpoint = torch.load(ckpt_path, map_location="cpu")
 
-    entity2id = checkpoint["entity2id"]
-    relation2id = checkpoint["relation2id"]
+
+    ckpt_entity2id = checkpoint["entity2id"]
+    if ckpt_entity2id != entity2id:
+        raise ValueError("entity2id mismatch between dataset and checkpoint")
+
+
+    ckpt_relation2id = checkpoint["relation2id"]
+    if ckpt_relation2id != relation2id:
+        raise ValueError("relation2id mismatch between dataset and checkpoint")
+    
     ckpt_cfg = checkpoint.get("config", cfg)  # fall back to current cfg if needed
     model_cfg = ckpt_cfg.get("model", {})
 
@@ -216,10 +224,6 @@ def main() -> None:
     model.to(device)
     model.eval()
 
-    # load fused entity embeddings V 
-    logger.info("loading fused entity embeddings from %s", fused_path)
-    fused_data = torch.load(fused_path, map_location="cpu")
-    V_fused = fused_data["V_fused"]  # [num_entities, embedding_dim]
 
     if V_fused.size(0) != num_entities:
         raise ValueError(
