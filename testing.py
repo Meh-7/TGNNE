@@ -40,6 +40,48 @@ def load_config(path: str) -> Dict[str, Any]:
         cfg = yaml.safe_load(f)
     return cfg
 
+def _load_prepared_dataset(
+    data_cfg: Dict[str, Any],
+    device: torch.device,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    Dict[str, int],
+    Dict[str, int],
+]:
+    if "prepared_dir" not in data_cfg:
+        raise ValueError(
+            "config.data.prepared_dir is not set.\n"
+            "Testing now relies on prepared datasets created by data_prep.py."
+        )
+
+    dataset_dir = Path(data_cfg["prepared_dir"])
+    if not dataset_dir.exists():
+        raise FileNotFoundError(f"Prepared dataset directory not found: {dataset_dir}")
+
+    train_path = dataset_dir / "train_ids.pt"
+    valid_path = dataset_dir / "valid_ids.pt"
+    test_path = dataset_dir / "test_ids.pt"
+    ent_map_path = dataset_dir / "entity2id.pt"
+    rel_map_path = dataset_dir / "relation2id.pt"
+
+    if not train_path.exists():
+        raise FileNotFoundError(f"train_ids.pt not found in {dataset_dir}")
+    if not ent_map_path.exists() or not rel_map_path.exists():
+        raise FileNotFoundError(
+            f"entity2id.pt / relation2id.pt not found in {dataset_dir}"
+        )
+
+    train_triples = torch.load(train_path).long().to(device)
+    valid_triples = torch.load(valid_path).long().to(device) if valid_path.exists() else None
+    test_triples = torch.load(test_path).long().to(device) if test_path.exists() else None
+
+    entity2id: Dict[str, int] = torch.load(ent_map_path)
+    relation2id: Dict[str, int] = torch.load(rel_map_path)
+
+    return train_triples, valid_triples, test_triples, entity2id, relation2id
+
 
 def main() -> None:
     """Entry point: load checkpoint, fused embeddings and encoded splits, then
@@ -71,58 +113,47 @@ def main() -> None:
     device = get_device_from_config(device_str)
     logger.info("using device: %s", device)
 
-    # locate output directory & artifacts 
-    output_cfg = cfg.get("output", {})
-    base_save_dir = output_cfg.get("save_dir", None)
-    if base_save_dir is None:
+    test_cfg = cfg.get("testing", {})
+    if "checkpoint_path" not in test_cfg:
         raise ValueError(
-            "output.save_dir is not set in the config; cannot locate checkpoint "
-            "and encoded splits for evaluation."
+            "config.testing.checkpoint_path is not set.\n"
+            "Please specify the path to a trained MVTE checkpoint."
         )
-    run_name = get_run_name_from_config(cfg)
-    out_dir = Path(base_save_dir) / run_name
 
-    if not out_dir.exists():
-        raise FileNotFoundError(f"output directory not found: {out_dir}")
-
-    ckpt_path = out_dir / "mvte_model.pt"
+    ckpt_path = Path(test_cfg["checkpoint_path"])
     if not ckpt_path.exists():
-        raise FileNotFoundError(f"checkpoint file not found: {ckpt_path}")
+        raise FileNotFoundError(f"checkpoint not found: {ckpt_path}")
 
-    fused_path = out_dir / "fused_entity_embeddings.pt"
-    if not fused_path.exists():
-        raise FileNotFoundError(
-            f"fused entity embedding file not found: {fused_path}. "
-            "Make sure training finished and saved embeddings."
+    logger.info("loading checkpoint from %s", ckpt_path)
+    checkpoint = torch.load(ckpt_path, map_location="cpu")
+
+
+    if "V_fused" not in checkpoint:
+        raise KeyError(
+            "checkpoint does not contain 'V_fused'. "
+            "Make sure the model was trained with main_flex.py."
         )
 
-    encoded_dir = out_dir / "encoded_splits"
-    if not encoded_dir.exists():
-        raise FileNotFoundError(
-            f"encoded_splits directory not found: {encoded_dir}. "
-            "Make sure main.py was run with output.save_dir set."
-        )
+    V_fused = checkpoint["V_fused"]  # [num_entities, embedding_dim]
 
-    train_ids_path = encoded_dir / "train_ids.pt"
-    test_ids_path = encoded_dir / "test_ids.pt"
-    valid_ids_path = encoded_dir / "valid_ids.pt"
+    logger.info(
+        "loaded fused entity embeddings V_fused with shape %s",
+        tuple(V_fused.shape),
+    )
 
-    if not train_ids_path.exists():
-        raise FileNotFoundError(f"train_ids.pt not found in {encoded_dir}")
-    if not test_ids_path.exists():
-        raise FileNotFoundError(
-            f"test_ids.pt not found in {encoded_dir} – did you train with a test split?"
-        )
+    # load prepared dataset splits
+    data_cfg = cfg.get("data", {})
+    (
+        train_triples,
+        valid_triples,
+        test_triples,
+        entity2id,
+        relation2id,
+    ) = _load_prepared_dataset(
+        data_cfg=data_cfg,
+        device=device,
+    )
 
-    # load encoded splits
-    logger.info("loading encoded splits from %s", encoded_dir)
-    train_triples = torch.load(train_ids_path, map_location="cpu")
-    test_triples = torch.load(test_ids_path, map_location="cpu")
-
-    valid_triples = None
-    if valid_ids_path.exists():
-        valid_triples = torch.load(valid_ids_path, map_location="cpu")
-        logger.info("loaded validation encoded triples as well")
 
     # Build union of all triples for filtered evaluation (on CPU).
     all_triples = train_triples
@@ -172,6 +203,16 @@ def main() -> None:
         gamma=gamma,
     )
     model.load_state_dict(checkpoint["model_state_dict"])
+    # restore semantic (non-parameter) model settings
+    model.base_scorer = model_cfg.get("base_scorer", "transe")
+    model.fusion_mode = model_cfg.get("fusion_mode", "learned")
+
+    logger.info(
+        "restored model semantics: base_scorer=%s | fusion_mode=%s",
+        model.base_scorer,
+        model.fusion_mode,
+    )
+
     model.to(device)
     model.eval()
 
@@ -187,7 +228,10 @@ def main() -> None:
         )
 
     # evaluation config (support both 'evaluation' and the typo key) 
-    eval_cfg = cfg.get("evaluation", cfg.get("evaluatgion", {}))
+    eval_cfg = cfg.get("evaluation", {})
+    if not eval_cfg:
+        logger.warning("no evaluation config found; using default evaluation parameters")
+
     batch_size_entities = eval_cfg.get("batch_size_entities", 1024)
     filtered = eval_cfg.get("filtered", True)
     hits_ks = eval_cfg.get("hits_ks", [1, 3, 10])

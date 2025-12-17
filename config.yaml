@@ -43,6 +43,10 @@ evaluation:
   hits_ks: [1, 3, 10]
   eval_every: 40                      # run evaluation every N epochs
   max_eval_triples: 10000               # max number of triples to use for eval (for speed during training/validation)
+
+testing:
+  checkpoint_path: runs/FB15k-237/20251202_141522/mvte_model.pt
+
 logging:
   level: "INFO"
   log_dir: "logs"
