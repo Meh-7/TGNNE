@@ -24,6 +24,7 @@ from utils import (
 )
 
 from evaluation import evaluate_link_prediction
+from plotting import plot_loss_only, plot_loss_and_metrics
 
 
 logger = logging.getLogger(__name__)
@@ -321,6 +322,8 @@ def main() -> None:
     logger.info("========== STARTING TRAINING RUN ==========")
 
 
+    loss_plot_path = run_dir / "loss_curve.png"
+    combined_plot_path = run_dir / "loss_and_metrics.png"
 
     def epoch_callback(epoch: int, mean_loss: float) -> None:
         """callback run at the end of each epoch to perform evaluation."""
@@ -335,6 +338,12 @@ def main() -> None:
             if write_header:
                 writer.writeheader()
             writer.writerow(loss_record)
+        # generate loss plot
+        plot_loss_only(
+            loss_csv=loss_csv_path,
+            out_path=loss_plot_path,
+        )
+
 
         # evaluation on validation set
         if valid_triples is None:
@@ -406,6 +415,13 @@ def main() -> None:
             if write_header:
                 writer.writeheader()
             writer.writerow(record)
+        # generate combined loss + metrics plot
+        plot_loss_and_metrics(
+            loss_csv=loss_csv_path,
+            metrics_csv=metrics_csv_path,
+            out_path=combined_plot_path,
+        )
+
         # optional checkpointing
         if checkpoint_every > 0 and (epoch % checkpoint_every) == 0:
             ckpt_dir = run_dir / "checkpoints"
