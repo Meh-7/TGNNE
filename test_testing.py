@@ -80,9 +80,10 @@ def make_data_prep_config(
 ) -> Path:
     cfg = f"""
     data:
-      train_path: "{train}"
-      valid_path: "{valid}"
-      test_path: "{test}"
+      source: files
+      train_path: "{train.as_posix()}"
+      valid_path: "{valid.as_posix()}"
+      test_path: "{test.as_posix()}"
       prepared_dir: "{(root / 'prepared').as_posix()}"
 
     topology:
@@ -180,8 +181,8 @@ def main() -> None:
         prep_cfg = make_data_prep_config(root, train, valid, test)
         run_with_argv(mvte_data_prep_main, ["data_prep.py", "--config", str(prep_cfg)])
 
-        prepared_dir = root / "prepared"
-        assert prepared_dir.exists()
+        prepared_dir = Path("data") / "train"
+        assert prepared_dir.exists(), f"prepared dataset not found: {prepared_dir}"
 
         # 3) training
         train_cfg = make_train_config(root, prepared_dir)
@@ -189,11 +190,18 @@ def main() -> None:
 
         # locate checkpoint
         run_root = root / "runs"
-        run_dirs = sorted(run_root.iterdir())
-        assert run_dirs, "no run directories created"
+        assert run_root.exists(), "runs directory not found"
 
-        ckpt = run_dirs[-1] / "mvte_model.pt"
-        assert ckpt.exists(), "checkpoint not found"
+        # runs/<run_name>/
+        run_name_dirs = sorted(d for d in run_root.iterdir() if d.is_dir())
+        assert run_name_dirs, "no run-name directories created"
+
+        # runs/<run_name>/<timestamp>/
+        timestamp_dirs = sorted(d for d in run_name_dirs[-1].iterdir() if d.is_dir())
+        assert timestamp_dirs, "no timestamped run directories created"
+
+        ckpt = timestamp_dirs[-1] / "mvte_model.pt"
+        assert ckpt.exists(), f"checkpoint not found: {ckpt}"
 
         # 4) testing
         test_cfg = make_test_config(root, prepared_dir, ckpt)

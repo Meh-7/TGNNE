@@ -143,14 +143,31 @@ def encode_triples(
     return torch.tensor(encoded, dtype=torch.long)
 
 def get_run_name_from_config(cfg: Dict[str, Any]) -> str:
-    """Derive a run/dataset name from the config for subdirectory naming."""
+    """Derive a run/dataset name from the config.
+
+    Priority:
+    1. prepared_dir (training / testing phase)
+    2. pykeen dataset name
+    3. raw train_path stem (data prep phase)
+    """
     data_cfg = cfg.get("data", {})
     source = data_cfg.get("source", "files")
 
+    # 1) prepared dataset (most stable for training/testing)
+    if "prepared_dir" in data_cfg and data_cfg["prepared_dir"]:
+        return Path(data_cfg["prepared_dir"]).name.rstrip("/")
+    
+    # 2) pykeen dataset, used for data prep from pykeen
     if source == "pykeen":
         # use the dataset name directly, e.g. "FB15k237"
         return str(data_cfg.get("dataset", "dataset"))
-    else:
+    
+    # 3) raw train file, used for data prep from files
+    if "train_path" in data_cfg:
         # use train file stem, e.g. "train_fb15k237"
-        train_path = Path(data_cfg["train_path"])
-        return train_path.stem
+        return Path(data_cfg["train_path"]).stem
+    
+    raise ValueError(
+        "Cannot determine run name from config; please check data source settings."
+        "Expected one of: data.prepared_dir, data.dataset (pykeen), or data.train_path."
+        )
