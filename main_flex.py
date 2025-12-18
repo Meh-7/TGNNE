@@ -143,6 +143,9 @@ def main() -> None:
     metrics_csv_path = run_dir / "metrics.csv"
     metrics_history: list[dict[str, Any]] = []  # for summary.json at the end
 
+    loss_csv_path = run_dir / "loss_history.csv"
+
+
 
     # logging 
     log_cfg = cfg.get("logging", {})
@@ -321,6 +324,19 @@ def main() -> None:
 
     def epoch_callback(epoch: int, mean_loss: float) -> None:
         """callback run at the end of each epoch to perform evaluation."""
+        # loss history logging (independent of evaluation)
+        loss_record = {
+            "epoch": epoch,
+            "train_loss": float(mean_loss),
+        }
+        write_header = not loss_csv_path.exists()
+        with loss_csv_path.open("a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=loss_record.keys())
+            if write_header:
+                writer.writeheader()
+            writer.writerow(loss_record)
+
+        # evaluation on validation set
         if valid_triples is None:
             print("no validation triples provided; skipping evaluation")
             return
