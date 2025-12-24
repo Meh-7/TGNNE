@@ -24,7 +24,7 @@ from utils import (
 )
 
 from evaluation import evaluate_link_prediction
-from plotting import plot_loss_only, plot_loss_and_metrics
+from plotting import plot_loss_only, plot_loss_and_scaled_metrics, plot_loss_and_MR
 
 
 logger = logging.getLogger(__name__)
@@ -323,7 +323,8 @@ def main() -> None:
 
 
     loss_plot_path = run_dir / "loss_curve.png"
-    combined_plot_path = run_dir / "loss_and_metrics.png"
+    loss_mr_plot_path = run_dir / "loss_and_MR.png"
+    loss_metrics_plot_path = run_dir / "loss_and_scaled_metrics.png"
 
     def epoch_callback(epoch: int, mean_loss: float) -> None:
         """callback run at the end of each epoch to perform evaluation."""
@@ -416,10 +417,15 @@ def main() -> None:
                 writer.writeheader()
             writer.writerow(record)
         # generate combined loss + metrics plot
-        plot_loss_and_metrics(
+        plot_loss_and_MR(
             loss_csv=loss_csv_path,
             metrics_csv=metrics_csv_path,
-            out_path=combined_plot_path,
+            out_path=loss_mr_plot_path,
+        )
+        plot_loss_and_scaled_metrics(
+            loss_csv=loss_csv_path,
+            metrics_csv=metrics_csv_path,
+            out_path=loss_metrics_plot_path,
         )
 
         # optional checkpointing
