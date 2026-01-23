@@ -29,12 +29,12 @@ training:
   device: "cuda"                     # "auto", "cpu", "cuda", or "cuda:0"
   lr: 0.008
   num_epochs: 500
-  batch_size: 2048
+  batch_size: 1024
   num_negatives: 512
   adversarial_temperature: 1.0 # alpha for adv. neg. sampling
   negative_mode: "both"              # "head" | "tail" | "both"
-  log_interval: 50
-  checkpoint_every: 50                # save a checkpoint every N epochs
+  log_interval: 25
+  checkpoint_every: 25                # save a checkpoint every N epochs
 
 
 evaluation:
