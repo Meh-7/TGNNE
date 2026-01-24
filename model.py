@@ -61,11 +61,60 @@ def score_distmult_from_V(
     scores = (v_h * r_vec * v_t).sum(dim=-1)  # [B]
     return scores
 # ----------------------------------------------------------------------------
+def score_rotate_from_V(
+    triples: torch.LongTensor,
+    V: torch.Tensor,
+    R: torch.Tensor,
+    gamma: torch.Tensor,
+    eps: float = 1e-9,
+) -> torch.Tensor:
+    """
+    RotatE score using entity embeddings as concatenated (re, im) of size 2d,
+    and relation embeddings as phase of size d.
 
+    score = gamma - || (h o r) - t ||_2, where r is complex unit rotation.
+    """
+    assert triples.dim() == 2 and triples.size(1) == 3, "triples must have shape [B, 3]"
+
+    h = triples[:, 0]
+    r = triples[:, 1]
+    t = triples[:, 2]
+
+    v_h = V[h]   # [B, 2d]
+    v_t = V[t]   # [B, 2d]
+    phase = R[r] # [B, d]
+
+    # split entity into real/imag parts
+    d2 = v_h.size(-1)
+    assert d2 % 2 == 0, "RotatE requires entity dim to be even (2d)"
+    d = d2 // 2
+
+    h_re, h_im = v_h[..., :d], v_h[..., d:] # split last dim into two halves, the last dim is what separates real and imaginary parts, no matter how many leading dims we have
+    t_re, t_im = v_t[..., :d], v_t[..., d:]
+
+    # Convert phase -> unit complex rotation
+    r_re = torch.cos(phase)
+    r_im = torch.sin(phase)
+
+    # Rotate head: (h_re + i h_im) * (r_re + i r_im)
+    rot_re = h_re * r_re - h_im * r_im # just develop the complex multiplication
+    rot_im = h_re * r_im + h_im * r_re
+
+    # Difference to tail
+    diff_re = rot_re - t_re
+    diff_im = rot_im - t_im
+
+    # L2 norm over complex components: sqrt(sum(diff_re^2 + diff_im^2))
+    # Return gamma - distance (higher is better), matching your training loss assumption.
+    distance = torch.sqrt(diff_re.pow(2) + diff_im.pow(2) + eps).sum(dim=-1)
+    scores = gamma - distance
+    return scores
+# ----------------------------------------------------------------------------
 SCORER_REGISTRY = {
     "transe": score_transe_from_V,
     "distmult": score_distmult_from_V,
-    # later: "complex": score_complex_from_V, "rotate": score_rotate_from_V, ...
+    "rotate": score_rotate_from_V,
+    # later: "complex": score_complex_from_V, ...
 }
 
 
@@ -326,14 +375,25 @@ class MVTEModel(nn.Module):
         tet_hidden_dim: int,
         dropout: float = 0.0,
         gamma: float = 12.0,   # <- new for better scoring, default similar to RotatE
+        base_scorer: str = "transe",  # <- new to allow different base scorers
 
     ):
         super().__init__()
 
-        # this is for bookkeeeping purposes to be stored
+        # not just for bookkeeping
         self.num_entities = num_entities
         self.num_relations = num_relations
         self.embedding_dim = embedding_dim
+
+        self.base_dim = embedding_dim
+        if self.base_scorer == "rotate": # RotatE requires entity dim to be 2d (real + imag) and relation dim to be d (phase)
+            self.entity_dim = 2 * self.base_dim
+            self.relation_dim = self.base_dim  # phase
+        else:
+            self.entity_dim = self.base_dim
+            self.relation_dim = self.base_dim
+
+
         # margin parameter γ (kept fixed, like RotatE)
         self.gamma = nn.Parameter(
             torch.tensor([gamma], dtype=torch.float),
@@ -343,15 +403,17 @@ class MVTEModel(nn.Module):
         
         # base scoring function: "transe" (default) or "distmult"
         # can be changed externally, e.g. model.base_scorer = "distmult"
-        self.base_scorer: str = "transe"
+        self.base_scorer: str = base_scorer
+
 
         # base embedding tables
-        self.entity_emb = nn.Embedding(num_entities, embedding_dim)
-        self.relation_emb = nn.Embedding(num_relations, embedding_dim)
+        self.entity_emb = nn.Embedding(num_entities, self.entity_dim) # adjusted for RotatE, entity dim may be 2d
+        self.relation_emb = nn.Embedding(num_relations, self.relation_dim) # adjusted for RotatE, relation dim may be d (phase)
+
 
         # topology module T(E)
         self.topology_encoder = TopologyEncoder(
-            input_dim=embedding_dim,
+            input_dim=self.entity_dim,   # adjusted for RotatE, entity dim is the one used in topology encoder
             tri_hidden_dim=tri_hidden_dim,
             tet_hidden_dim=tet_hidden_dim,
             dropout=dropout,
@@ -416,6 +478,10 @@ class MVTEModel(nn.Module):
         """
         E = self.entity_emb.weight
 
+        if self.base_scorer == "rotate":
+            assert E.size(-1) == 2 * self.base_dim
+
+
         if topo is None:
             V_topo = torch.zeros_like(E)
         else:
@@ -435,7 +501,10 @@ class MVTEModel(nn.Module):
         Delegates to a base scoring function selected by `self.base_scorer`."""
         assert triples.dim() == 2 and triples.size(1) == 3, "triples must have shape [B, 3]"
 
-        R = self.relation_emb.weight  # [num_relations, d]
+        R = self.relation_emb.weight  # [num_relations, relation_dim]
+        if self.base_scorer == "rotate":
+            assert V.size(-1) == self.entity_dim
+            assert R.size(-1) == self.relation_dim
 
         scorer_fn = SCORER_REGISTRY.get(self.base_scorer, None)
         if scorer_fn is None:
@@ -529,7 +598,7 @@ class MVTETransC(MVTEModel):
         self.num_concepts = num_concepts
 
         # concept centers in the same space as entities
-        self.concept_center = nn.Embedding(num_concepts, embedding_dim)
+        self.concept_center = nn.Embedding(num_concepts, self.entity_dim)
         # separate table for radii (scalar per concept)
         self.concept_radius = nn.Embedding(num_concepts, 1)
 
