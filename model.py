@@ -27,7 +27,7 @@ def score_transe_from_V(
     t = triples[:, 2]
     # gets the indices for heads, relations, tails from the batch of triples
     # we then map these indices to their corresponding embeddings to get vectors for scoring
-    v_h = V[h]      # [B, d]
+    v_h = V[h]      # [B, d] 2d for RotatE
     v_t = V[t]      # [B, d]
     r_vec = R[r]    # [B, d]
 
@@ -386,6 +386,8 @@ class MVTEModel(nn.Module):
         self.embedding_dim = embedding_dim
 
         self.base_dim = embedding_dim
+        self.base_scorer: str = base_scorer
+
         if self.base_scorer == "rotate": # RotatE requires entity dim to be 2d (real + imag) and relation dim to be d (phase)
             self.entity_dim = 2 * self.base_dim
             self.relation_dim = self.base_dim  # phase
@@ -403,7 +405,7 @@ class MVTEModel(nn.Module):
         
         # base scoring function: "transe" (default) or "distmult"
         # can be changed externally, e.g. model.base_scorer = "distmult"
-        self.base_scorer: str = base_scorer
+        
 
 
         # base embedding tables

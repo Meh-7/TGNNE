@@ -136,18 +136,7 @@ def main() -> None:
     run_dir = run_root / run_name / timestamp
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # save used config for reference
-    with (run_dir / "config_used.yaml").open("w", encoding="utf-8") as f:
-        yaml.safe_dump(cfg, f)
-    logger.info("saved config to %s", run_dir / "config_used.yaml")
-    
-    metrics_csv_path = run_dir / "metrics.csv"
-    metrics_history: list[dict[str, Any]] = []  # for summary.json at the end
-
-    loss_csv_path = run_dir / "loss_history.csv"
-
-
-
+    # setup logging to file and console
     # logging 
     log_cfg = cfg.get("logging", {})
     log_level = log_cfg.get("level", "INFO")
@@ -160,6 +149,17 @@ def main() -> None:
     setup_logging(log_level=log_level, log_dir=log_dir)
 
     logger.info("loaded config from %s", args.config)
+    # save used config for reference
+    with (run_dir / "config_used.yaml").open("w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f)
+    logger.info("saved config to %s", run_dir / "config_used.yaml")
+    
+    metrics_csv_path = run_dir / "metrics.csv"
+    metrics_history: list[dict[str, Any]] = []  # for summary.json at the end
+
+    loss_csv_path = run_dir / "loss_history.csv"
+
+
 
     # seeding 
     seed = cfg.get("training", {}).get("seed", 42)
@@ -226,6 +226,11 @@ def main() -> None:
     eval_hits_ks = eval_cfg.get("hits_ks", [1, 3, 10])
     eval_every = eval_cfg.get("eval_every", 1)  # run every epoch by default
 
+    # select base scorer from config
+    base_scorer = model_cfg.get("base_scorer", "transe")
+    # after rotatE support added, the scorer needs to be passed here because the difference isn't just in the scoring function but also in the space and embedding dimensions
+    # the constructor of MVTEModel handles this internally, but needs to know which one to use as rotatE uses complex embeddings and affects more than just the scoring
+
     model = MVTEModel(
         num_entities=num_entities,
         num_relations=num_relations,
@@ -234,9 +239,9 @@ def main() -> None:
         tet_hidden_dim=tet_hidden_dim,
         dropout=dropout,
         gamma=gamma,
+        base_scorer=base_scorer,
     )
-    # NEW: select base scorer from config
-    model.base_scorer = model_cfg.get("base_scorer", "transe")
+
     model.fusion_mode = model_cfg.get("fusion_mode", "equal")  # "learned" | "topo_only" | "equal" | "custom"
     model.to(device)
 
@@ -264,7 +269,9 @@ def main() -> None:
             "starting training of MVTEModel\n"
             "  num_entities      = %d\n"
             "  num_relations     = %d\n"
-            "  embedding_dim     = %d\n"
+            "  base_dim          = %d\n"
+            "  entity_dim        = %d\n"
+            "  relation_dim      = %d\n"
             "  tri_hidden_dim    = %d\n"
             "  tet_hidden_dim    = %d\n"
             "  dropout           = %.3f\n"
@@ -277,7 +284,9 @@ def main() -> None:
         ),
         num_entities,
         num_relations,
-        embedding_dim,
+        model.base_dim,
+        model.entity_dim,
+        model.relation_dim,
         tri_hidden_dim,
         tet_hidden_dim,
         dropout,
@@ -348,10 +357,12 @@ def main() -> None:
 
         # evaluation on validation set
         if valid_triples is None:
-            print("no validation triples provided; skipping evaluation")
+            logger.info("no validation triples provided; skipping evaluation")
             return
-        if eval_every > 1 and (epoch % eval_every) != 0 and epoch != num_epochs:
-            print("skipping evaluation at epoch %d", epoch)
+        is_last = (epoch == num_epochs)
+        should_eval = (epoch % eval_every == 0) or is_last
+        if not should_eval:
+            logger.info("skipping evaluation at epoch %d", epoch)
             return
         logger.info("running link prediction evaluation at epoch %d", epoch)
         # This uses evaluation.py. If V is None, it will:
@@ -380,7 +391,7 @@ def main() -> None:
         logger.info(
             (
                 "validation epoch %d | loss=%.4f | MR=%.1f | MRR=%.4f | "
-                "Hits@1=%.4f | Hits@3=%.4f | Hits@10=%.4f"
+                "Hits@1=%.4f | Hits@3=%.4f | Hits@10=%.4f |"
                 "Fusion weights: w1=%.4f, w2=%.4f"
             ),
             epoch,
