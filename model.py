@@ -347,7 +347,20 @@ class TopologyEncoder(nn.Module):
             num_tetras=num_tetras,
         ) # [num_tetras, tet_hidden_dim]
         # tetra -> entity dimension projection
-        tet_proj = self.tet_to_entity(tet_emb)  # [num_tetras, entity_dim]
+        """tet_proj = self.tet_to_entity(tet_emb)  # [num_tetras, entity_dim]
+            this will make it OOM because it can be a very large tensor if there are many tetras"""
+        num_tetras = tet_emb.size(0)
+        tet_proj = torch.empty(
+            num_tetras,
+            entity_emb.size(1),
+            device=tet_emb.device,
+            dtype=tet_emb.dtype,
+        )
+        chunk_size = 100_000
+        for start in range(0, num_tetras, chunk_size):
+            end = min(start + chunk_size, num_tetras)
+            tet_proj[start:end] = self.tet_to_entity(tet_emb[start:end])
+        
 
         # tetra -> entity (downward aggregation)
         # topo.entity_tetra_index stores edges (entity, tetra)
