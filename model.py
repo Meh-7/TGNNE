@@ -123,6 +123,7 @@ def _mean_aggregate(
     edge_index: torch.LongTensor,
     src: torch.Tensor,
     num_dst: int,
+    chunk_size: int = 100_000,
 ) -> torch.Tensor:
     """mean aggregate from src nodes to dst nodes along edges.
 
@@ -169,6 +170,7 @@ def _mean_aggregate(
     )
     # initialize a counts tensor to count the number of incoming messages for each dst node, which is why we use num_dst
 
+    """
     ones = torch.ones(
         src_idx.size(0),
         dtype=src.dtype,
@@ -179,6 +181,20 @@ def _mean_aggregate(
     # accumulates ones into the counts tensor such that everytime an edge points to a dst node, we increment its (dst node) count by 1 
     # we then essentially have the number of incoming messages for each dst node
     # this can be hard coded to be 3 or 4 for triangles/tetras, but this is more general and flexible in case of future changes
+    """
+    num_edges = src_idx.numel()
+    for start in range(0, num_edges, chunk_size):
+        end = min(start + chunk_size, num_edges)
+        src_chunk = src_idx[start:end]
+        dst_chunk = dst_idx[start:end]
+
+        agg.index_add_(0, dst_chunk, src[src_chunk])
+        counts.index_add_(
+        0,
+        dst_chunk,
+        torch.ones_like(dst_chunk, dtype=counts.dtype),
+        )
+
 
     mask = counts > 0 # the mask tells use which dst nodes received at least one message ,but this is always true by construction in our case, but good to be safe in case of manipulations mid way
     if mask.any():
