@@ -340,6 +340,7 @@ def main() -> None:
     best_mr_epoch = None
 
     def epoch_callback(epoch: int, mean_loss: float) -> None:
+        nonlocal best_mr, best_mr_epoch
         """callback run at the end of each epoch to perform evaluation."""
         # loss history logging (independent of evaluation)
         loss_record = {
@@ -409,7 +410,6 @@ def main() -> None:
             float(w2),
         )
         current_mr = float(metrics["MR"])
-        nonlocal best_mr, best_mr_epoch
         if current_mr < best_mr:
             best_mr = current_mr
             best_mr_epoch = epoch

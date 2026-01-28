@@ -157,7 +157,7 @@ def _mean_aggregate(
         dtype=src.dtype,
         device=src.device,
     ) # will eventually contain the sum of all messages arriving at destination node d
-    agg.index_add_(0, dst_idx, src[src_idx])
+    """agg.index_add_(0, dst_idx, src[src_idx])"""
     # src[src_idx] extracts the feature vectors of the source nodes of each edge
     # dst_idx tells where each of these feature vectors should be added
     # index_add_ accumulates these vectors into the agg tensor at the appropriate dst indices, 
