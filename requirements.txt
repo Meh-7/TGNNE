@@ -1,0 +1,7 @@
+numpy==1.26.4
+torch==2.8.0
+pykeen==1.10.2
+pandas==2.1.4
+gudhi==3.9.0
+igraph==0.11.4
+matplotlib==3.8.2

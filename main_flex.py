@@ -335,6 +335,10 @@ def main() -> None:
     loss_mr_plot_path = run_dir / "loss_and_MR.png"
     loss_metrics_plot_path = run_dir / "loss_and_scaled_metrics.png"
 
+    # this is to track best validation MR and save 
+    best_mr = float("inf")
+    best_mr_epoch = None
+
     def epoch_callback(epoch: int, mean_loss: float) -> None:
         """callback run at the end of each epoch to perform evaluation."""
         # loss history logging (independent of evaluation)
@@ -404,6 +408,29 @@ def main() -> None:
             float(w1),
             float(w2),
         )
+        current_mr = float(metrics["MR"])
+        nonlocal best_mr, best_mr_epoch
+        if current_mr < best_mr:
+            best_mr = current_mr
+            best_mr_epoch = epoch
+            best_path = run_dir / "checkpoints" / "best_model.pt"
+            best_path.parent.mkdir(parents=True, exist_ok=True)
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "best_MR": best_mr,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "config": cfg,
+                },
+                best_path,
+            )
+            logger.info(
+                "new best validation MR: %.1f at epoch %d saved at %s",
+                best_mr,
+                best_mr_epoch,
+                best_path,
+            )
 
         # NEW: store a structured record
         record = {
@@ -439,7 +466,7 @@ def main() -> None:
             out_path=loss_metrics_plot_path,
         )
 
-        # optional checkpointing
+        # checkpointing
         if checkpoint_every > 0 and (epoch % checkpoint_every) == 0:
             ckpt_dir = run_dir / "checkpoints"
             ckpt_dir.mkdir(parents=True, exist_ok=True)
