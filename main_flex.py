@@ -8,7 +8,7 @@ from datetime import datetime
 import json
 import time
 import csv
-
+import shutil
 
 import torch
 import yaml
@@ -157,6 +157,9 @@ def main() -> None:
     with (run_dir / "config_used.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f)
     logger.info("saved config to %s", run_dir / "config_used.yaml")
+    original_config_path = Path(args.config)
+    shutil.copy(original_config_path, run_dir / "config_original.yaml")
+    logger.info("copied original config to %s", run_dir / "config_original.yaml")
     
     metrics_csv_path = run_dir / "metrics.csv"
     metrics_history: list[dict[str, Any]] = []  # for summary.json at the end
