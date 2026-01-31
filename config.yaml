@@ -35,7 +35,7 @@ training:
   negative_mode: "both"              # "head" | "tail" | "both"
   log_interval: 10
   checkpoint_every: 50                # save a checkpoint every N epochs
-  resume_from: checkpoints/FB15k-237/20260130_173506/checkpoint_epoch_200.pt # comment out to train from scratch
+  #resume_from: checkpoints/FB15k-237/20260130_173506/checkpoint_epoch_200.pt # comment out to train from scratch
 
 
 
