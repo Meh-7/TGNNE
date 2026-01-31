@@ -125,6 +125,10 @@ def main() -> None:
     start_time = time.time()
     args = parse_args()
     cfg = load_config(args.config)
+    train_cfg = cfg.get("training", {})
+    resume_from = train_cfg.get("resume_from", None)
+    start_epoch = 1
+
 
     # derive a run/dataset name for subdirectories
     run_name = get_run_name_from_config(cfg)
@@ -258,6 +262,26 @@ def main() -> None:
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
+
+
+    # optionally resume from a checkpoint
+    if resume_from is not None:
+        ckpt_path = Path(resume_from)
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"resume_from checkpoint not found: {ckpt_path}")
+        logger.info("resuming training from checkpoint: %s", ckpt_path)
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
+
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+        start_epoch = checkpoint.get("epoch", 0) + 1
+
+        logger.info(
+            " checkpoint loaded (epoch %d). Resuming from epoch %d",
+            start_epoch - 1,
+            start_epoch,
+        )
     # ------------------------------------------------------------------
     # model summary logging
     # ------------------------------------------------------------------
@@ -499,6 +523,7 @@ def main() -> None:
         negative_mode=negative_mode,
         log_interval=log_interval,
         epoch_callback=epoch_callback,
+        start_epoch=start_epoch,
     )
 
     # compute fused entity embeddings V once at the end of training

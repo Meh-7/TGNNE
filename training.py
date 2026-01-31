@@ -272,6 +272,7 @@ def train_model(
     negative_mode: str = "both",
     log_interval: int = 100,
     epoch_callback: Optional[Callable[[int, float], None]] = None,
+    start_epoch: int = 1,
 ) -> None:
     """high-level training loop over multiple epochs.
 
@@ -286,7 +287,7 @@ def train_model(
 
     model.to(device)
 
-    for epoch in range(1, num_epochs + 1):
+    for epoch in range(start_epoch, num_epochs + 1):
         mean_loss = train_one_epoch(
             model=model,
             topo=topo,
