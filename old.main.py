@@ -1,4 +1,4 @@
-# main.py
+ main.py
 # CLI: preprocess / train / eval
 
 from __future__ import annotations

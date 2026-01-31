@@ -8,3 +8,4 @@ model copy.py
 /data
 smoke_test.yaml
 /runs_smoke
+old.main.py
