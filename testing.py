@@ -7,6 +7,7 @@ from typing import Any, Dict
 
 import torch
 import yaml
+import json
 
 from evaluation import evaluate_link_prediction
 from model import MVTEModel
@@ -120,13 +121,19 @@ def main() -> None:
             "Please specify the path to a trained MVTE checkpoint."
         )
 
-    ckpt_path = Path(test_cfg["checkpoint_path"])
+    ckpt_path = Path(test_cfg["checkpoint_path"]).resolve()
+
     if not ckpt_path.exists():
         raise FileNotFoundError(f"checkpoint not found: {ckpt_path}")
 
+    
     logger.info("loading checkpoint from %s", ckpt_path)
     checkpoint = torch.load(ckpt_path, map_location="cpu")
 
+    # run directory = parent of "checkpoints/"
+    out_dir = ckpt_path.parent.parent
+    if not out_dir.exists():
+        raise FileNotFoundError(f"run directory not found: {out_dir}")
 
     if "V_fused" not in checkpoint:
         raise KeyError(
@@ -268,6 +275,40 @@ def main() -> None:
     print("Test set metrics:")
     for k, v in metrics.items():
         print(f"  {k}: {v:.6f}")
+
+    # Save metrics
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1) Save metrics as JSON
+    metrics_path = out_dir / "test_metrics.json"
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+    logger.info("saved test metrics to %s", metrics_path)
+
+    # 2) Save a test-only config snapshot
+    test_config = {
+        "testing": {
+            "checkpoint_path": str(ckpt_path),
+        },
+        "data": {
+            "prepared_dir": cfg.get("data", {}).get("prepared_dir"),
+        },
+        "evaluation": {
+            "filtered": filtered,
+            "batch_size_entities": batch_size_entities,
+            "hits_ks": hits_ks,
+        },
+        "runtime": {
+            "device": str(device),
+            "seed": seed,
+        },
+    }
+
+    test_config_path = out_dir / "test_config.yaml"
+    with open(test_config_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(test_config, f, sort_keys=False)
+    logger.info("saved test config to %s", test_config_path)
+
 
 
 if __name__ == "__main__":

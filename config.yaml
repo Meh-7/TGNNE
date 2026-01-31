@@ -47,7 +47,7 @@ evaluation:
   max_eval_triples: 15000               # max number of triples to use for eval (for speed during training/validation)
 
 #testing:
-#  checkpoint_path: runs/FB15k-237/20251202_141522/mvte_model.pt
+#  checkpoint_path: checkpoints/FB15k-237/20251202_141522/checkpoints/best_model.pt
 
 logging:
   level: "INFO"
